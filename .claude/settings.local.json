@@ -5,7 +5,16 @@
       "Bash(git init:*)",
       "Bash(git add:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: agente SRE/SecOps con loop ReAct y fallback para modelos locales\n\nAgente autónomo que monitorea pods en Kubernetes, diagnostica problemas\n\\(CrashLoopBackOff, ImagePullBackOff, OOMKilled, etc.\\) y aplica\nremediación vía helm upgrade, kubectl apply o rollout restart.\n\nIncluye fallback de parseo de tool calls desde texto plano para\ncompatibilidad con modelos locales \\(qwen via Ollama\\) que no siempre\nusan el formato nativo de function calling.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(brew install:*)"
+      "Bash(brew install:*)",
+      "Bash(python3:*)",
+      "Bash(git -C /Users/santiago/Proyects/Agente status:*)",
+      "Bash(git -C /Users/santiago/Proyects/Agente diff)",
+      "Bash(git -C /Users/santiago/Proyects/Agente log:*)",
+      "Bash(git -C /Users/santiago/Proyects/Agente diff collectors/k8s.py srv-monitoring.yaml)",
+      "Bash(git -C /Users/santiago/Proyects/Agente add:*)",
+      "Bash(git -C /Users/santiago/Proyects/Agente commit -m \"$\\(cat <<''EOF''\nfix: corregir parseo de errores de Prometheus en analyze_pod_health\n\nCuando Prometheus no era alcanzable, los mensajes de error \\(que\nterminan en \":9090\"\\) se parseaban como valores de métricas,\nresultando en reportes falsos \\(9090 restarts, 9090 cores de CPU,\n100% memoria\\).\n\nSe agrega validación _is_prom_error\\(\\) que detecta respuestas de\nerror antes de intentar parsear valores numéricos. También se\nreemplazan bare except por \\(ValueError, IndexError\\) y se mejora\nel chequeo de ready status para evitar falsos positivos.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git -C /Users/santiago/Proyects/Agente push)",
+      "Bash(git -C /Users/santiago/Proyects/Agente commit -m \"$\\(cat <<''EOF''\nfeat: selector interactivo de LLM, anti-loop y nuevas tools\n\n- Selector interactivo de proveedor LLM al iniciar \\(ollama/kimi\\)\n  con soporte para --llm flag por CLI\n- Reestructurar config.yaml: sección ''llm'' con múltiples proveedores\n- Mejorar system prompt: estrategia de fix según tipo de recurso\n  \\(bare pod vs deployment vs helm\\), ejemplo paso a paso\n- Agregar tools: delete_pod y patch_resource\n- Mejorar parser de fallback: priorizar acciones sobre observaciones,\n  evitar repetir calls anteriores\n- Detección de loops: si el LLM repite la misma tool+args, inyectar\n  mensaje correctivo forzando cambio de estrategia\n- Actualizar README con selector de LLM y nuevas herramientas\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")"
     ]
   }
 }
