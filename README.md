@@ -188,6 +188,19 @@ python main.py --once
 | 🔧 `rollout_restart` | **Act** | Reinicio graceful de deployment |
 | 🏁 `finish` | **Terminate** | Cierra el loop con resultado |
 
+### 🛡️ Guardrails para modelos locales
+
+El agente incluye protecciones que permiten usar modelos chicos (7B) de forma confiable:
+
+| Guardrail | Problema que resuelve |
+|-----------|----------------------|
+| **Normalización de args** | Modelos que usan `pod_name` en vez de `pod`, o `manifest` en vez de `manifest_yaml` |
+| **Sanitización de YAML** | Args numéricos (`- 1`) que Kubernetes rechaza; se fuerzan a string (`- "1"`) |
+| **Validación de finish()** | Si el LLM dice `resolved=true` sin haber ejecutado una acción exitosa, se rechaza |
+| **Nudge de acción** | Después de 3 iteraciones solo observando, fuerza al LLM a actuar |
+| **Nudge de finish** | En las últimas 2 iteraciones, fuerza al LLM a llamar `finish()` |
+| **Anti-loop** | Detecta tool calls repetidos y fuerza cambio de estrategia |
+
 ### 📝 Ejemplos de consultas Loki
 
 El agente puede usar LogQL para obtener contexto histórico:

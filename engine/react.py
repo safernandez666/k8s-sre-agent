@@ -8,6 +8,7 @@ import re
 import uuid
 from typing import Callable
 from openai import OpenAI
+import yaml as _yaml
 
 
 # ─── DEFINICIÓN DE HERRAMIENTAS ───────────────────────────────────────────────
@@ -470,6 +471,22 @@ class ReActAgent:
         for i in range(self.max_iterations):
             self.log(f"\n[ITERACIÓN {i+1}/{self.max_iterations}]")
 
+            # Nudge: después de 3 iteraciones sin acción exitosa, forzar al LLM a actuar
+            acted_so_far = any(
+                s["action"] in _ACTION_TOOLS - {"finish"} and not s["result"].startswith("ERROR")
+                for s in steps
+            )
+            if i >= 3 and not acted_so_far:
+                self.history.append({
+                    "role": "user",
+                    "content": (
+                        "⚠️ Ya llevas 3+ iteraciones de observación sin aplicar ningún fix. "
+                        "DEBES ACTUAR AHORA. Para pod bare con OOMKilled: "
+                        "1) delete_pod 2) kubectl_apply con manifest_yaml corregido (memory limit más alto). "
+                        "NO hagas más observaciones."
+                    )
+                })
+
             # Nudge: cuando quedan 2 iteraciones, forzar al LLM a llamar finish()
             if i >= self.max_iterations - 2:
                 self.history.append({
@@ -564,23 +581,28 @@ class ReActAgent:
                 steps.append({"action": fn_name, "args": fn_args, "result": result[:500]})
 
                 # Después de una acción, el estado del cluster cambió:
-                # limpiar historial de observaciones para permitir re-verificar
+                # limpiar TODO el historial para permitir reintentos (ej: kubectl_apply que
+                # falló antes de delete_pod ahora puede funcionar). max_iterations previene loops.
                 if fn_name in _ACTION_TOOLS:
-                    previous_calls = {c for c in previous_calls if c.split(":")[0] in _ACTION_TOOLS}
+                    previous_calls.clear()
 
-                # Si es finish, verificar que realmente se haya actuado
+                # Si es finish, verificar que realmente se haya actuado con éxito
                 if fn_name == "finish":
-                    acted = any(s["action"] in _ACTION_TOOLS - {"finish"} for s in steps)
-                    if fn_args.get("resolved") and not acted:
-                        # El LLM dice que resolvió pero nunca ejecutó una acción real
-                        self.log("⚠️  finish(resolved=true) rechazado: no se ejecutó ninguna acción correctiva")
+                    acted_ok = any(
+                        s["action"] in _ACTION_TOOLS - {"finish"}
+                        and not s["result"].startswith("ERROR")
+                        for s in steps
+                    )
+                    if fn_args.get("resolved") and not acted_ok:
+                        # El LLM dice que resolvió pero no ejecutó una acción exitosa
+                        self.log("⚠️  finish(resolved=true) rechazado: ninguna acción correctiva tuvo éxito")
                         self.history.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
                             "content": (
-                                "RECHAZADO: Dijiste resolved=true pero NO ejecutaste ninguna acción correctiva "
-                                "(delete_pod, kubectl_apply, patch_resource, helm_upgrade, rollout_restart). "
-                                "Primero DEBES aplicar el fix y luego llamar finish()."
+                                "RECHAZADO: Dijiste resolved=true pero ninguna acción correctiva tuvo éxito. "
+                                "Para un pod bare con OOMKilled: primero delete_pod, luego kubectl_apply con manifest_yaml corregido. "
+                                "El parámetro se llama 'manifest_yaml' (no 'manifest')."
                             )
                         })
                         continue
@@ -606,8 +628,32 @@ class ReActAgent:
             "steps": steps
         }
 
+    @staticmethod
+    def _normalize_args(args: dict) -> dict:
+        """Normaliza nombres de parámetros que modelos chicos suelen equivocar."""
+        aliases = {
+            "pod_name": "pod",
+            "manifest": "manifest_yaml",
+        }
+        return {aliases.get(k, k): v for k, v in args.items()}
+
+    @staticmethod
+    def _sanitize_manifest(manifest_yaml: str) -> str:
+        """Fuerza args y command a strings (modelos chicos generan ints en YAML)."""
+        try:
+            doc = _yaml.safe_load(manifest_yaml)
+            for c in doc.get("spec", {}).get("containers", []):
+                if "args" in c:
+                    c["args"] = [str(a) for a in c["args"]]
+                if "command" in c:
+                    c["command"] = [str(a) for a in c["command"]]
+            return _yaml.dump(doc, default_flow_style=False)
+        except Exception:
+            return manifest_yaml
+
     def _execute_tool(self, name: str, args: dict) -> str:
         """Despacha la herramienta correcta."""
+        args = self._normalize_args(args)
         dry = self.dry_run
         k = self.k8s
 
@@ -630,7 +676,7 @@ class ReActAgent:
                         args["namespace"], args["set_values"], dry_run=dry
                     )
                 case "kubectl_apply":
-                    return k.kubectl_apply(args["manifest_yaml"], dry_run=dry)
+                    return k.kubectl_apply(self._sanitize_manifest(args["manifest_yaml"]), dry_run=dry)
                 case "delete_pod":
                     return k.restart_pod(args["namespace"], args["pod"], dry_run=dry)
                 case "rollout_restart":
