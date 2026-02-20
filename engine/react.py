@@ -402,6 +402,8 @@ REGLAS CRÍTICAS:
 - Si una acción falla (ej: helm_upgrade retorna error), NO la repitas. Usa una alternativa.
 - Máximo 2-3 pasos de observación, después DEBES actuar o llamar finish().
 - SIEMPRE termina llamando a finish() con resolved=true/false y un resumen técnico.
+- Después de aplicar un fix exitoso (kubectl_apply, patch_resource, etc.), llama a finish(resolved=true).
+  No gastes iteraciones extra verificando; el monitor re-verificará automáticamente.
 
 EJEMPLO: Pod bare con OOMKilled (memory-hog en namespace prd):
 1. describe_pod → ver que no tiene "Controlled By" (es bare pod), image=polinux/stress, limits.memory=50Mi
@@ -424,8 +426,7 @@ EJEMPLO: Pod bare con OOMKilled (memory-hog en namespace prd):
            memory: "256Mi"
        command: ["stress"]
        args: ["--vm", "1", "--vm-bytes", "100M", "--vm-hang", "1"]
-5. describe_pod → verificar que el pod está Running
-6. finish(resolved=true, summary="Pod bare con OOMKilled. Eliminé el pod y lo recreé con memory limit de 256Mi (antes 50Mi)")
+5. finish(resolved=true, summary="Pod bare con OOMKilled. Eliminé el pod y lo recreé con memory limit de 256Mi (antes 50Mi)")
 
 CUÁNDO USAR LOKI: logs de más de 1 hora, buscar patrones históricos, ver logs de múltiples pods.
 CUÁNDO USAR PROMETHEUS: verificar CPU/memoria/restarts, detectar pods con alta utilización.
@@ -468,6 +469,18 @@ class ReActAgent:
 
         for i in range(self.max_iterations):
             self.log(f"\n[ITERACIÓN {i+1}/{self.max_iterations}]")
+
+            # Nudge: cuando quedan 2 iteraciones, forzar al LLM a llamar finish()
+            if i >= self.max_iterations - 2:
+                self.history.append({
+                    "role": "user",
+                    "content": (
+                        f"⚠️ QUEDAN {self.max_iterations - i} ITERACIONES. "
+                        "DEBES llamar a finish() AHORA con resolved=true si ya aplicaste un fix exitoso, "
+                        "o resolved=false si no pudiste resolver el problema. "
+                        "NO uses más herramientas de observación."
+                    )
+                })
 
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -555,8 +568,22 @@ class ReActAgent:
                 if fn_name in _ACTION_TOOLS:
                     previous_calls = {c for c in previous_calls if c.split(":")[0] in _ACTION_TOOLS}
 
-                # Si es finish, terminamos
+                # Si es finish, verificar que realmente se haya actuado
                 if fn_name == "finish":
+                    acted = any(s["action"] in _ACTION_TOOLS - {"finish"} for s in steps)
+                    if fn_args.get("resolved") and not acted:
+                        # El LLM dice que resolvió pero nunca ejecutó una acción real
+                        self.log("⚠️  finish(resolved=true) rechazado: no se ejecutó ninguna acción correctiva")
+                        self.history.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": (
+                                "RECHAZADO: Dijiste resolved=true pero NO ejecutaste ninguna acción correctiva "
+                                "(delete_pod, kubectl_apply, patch_resource, helm_upgrade, rollout_restart). "
+                                "Primero DEBES aplicar el fix y luego llamar finish()."
+                            )
+                        })
+                        continue
                     self.log(f"\n{'✅' if fn_args['resolved'] else '❌'} RESULTADO: {fn_args['summary']}")
                     return {
                         "resolved": fn_args["resolved"],
