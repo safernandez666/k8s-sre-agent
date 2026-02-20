@@ -161,6 +161,66 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "query_prometheus",
+            "description": "Ejecuta una consulta PromQL en Prometheus. Útil para obtener métricas de CPU, memoria, restarts, etc. Usar cuando necesites ver el uso de recursos de un pod o detectar anomalías.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Query PromQL (ej: 'rate(container_cpu_usage_seconds_total[5m])')"},
+                    "time_range": {"type": "string", "description": "Rango de tiempo (ej: 5m, 1h)", "default": "5m"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_pod_metrics",
+            "description": "Obtiene métricas de CPU, memoria y restarts de un pod específico. Útil para diagnosticar problemas de recursos.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "namespace": {"type": "string", "description": "Namespace del pod"},
+                    "pod": {"type": "string", "description": "Nombre del pod"}
+                },
+                "required": ["namespace", "pod"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_high_resource_pods",
+            "description": "Detecta pods con alta utilización de CPU o memoria (>80%). Útil para encontrar pods que pueden estar causando problemas de rendimiento.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "namespace": {"type": "string", "description": "Namespace a consultar (opcional, vacío = todos)"},
+                    "threshold": {"type": "number", "description": "Umbral de utilización (0.0-1.0, default 0.8)", "default": 0.8}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_pod_health",
+            "description": "Análisis completo de salud de un pod usando métricas de Prometheus. Detecta problemas como alta utilización de recursos, restarts frecuentes, contenedores no listos, y riesgo de OOMKill.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "namespace": {"type": "string", "description": "Namespace del pod"},
+                    "pod": {"type": "string", "description": "Nombre del pod"}
+                },
+                "required": ["namespace", "pod"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "finish",
             "description": "Llama cuando el problema está resuelto o cuando no hay más acciones posibles.",
             "parameters": {
@@ -273,6 +333,18 @@ REGLAS CRÍTICAS:
 CUÁNDO USAR LOKI (logs históricos):
 - Usa query_loki cuando: necesites ver logs de más de 1 hora atrás, buscar en múltiples pods, o filtrar por patrones específicos.
 - Usa search_errors_in_loki cuando: sospeches de errores recurrentes, necesites ver el historial de fallos, o get_pod_logs no muestre suficiente información.
+
+CUÁNDO USAR PROMETHEUS (métricas):
+- Usa analyze_pod_health cuando: un pod esté en CrashLoopBackOff o tenga problemas de rendimiento. Te dará un análisis completo de CPU, memoria, restarts y estado.
+- Usa get_pod_metrics cuando: necesites ver métricas específicas de un pod (CPU, memoria, restarts).
+- Usa get_high_resource_pods cuando: sospeches que hay problemas de recursos en el cluster y quieras encontrar los pods más pesados.
+- Usa query_prometheus cuando: necesites hacer una consulta PromQL específica que no cubran las otras herramientas.
+
+EJEMPLOS DE DIAGNÓSTICO CON MÉTRICAS:
+- Pod con muchos restarts → usar analyze_pod_health para ver si es por OOM (memoria) o CPU.
+- OOMKilled → verificar con get_pod_metrics si el uso de memoria está cerca del límite.
+- Pod lento → usar get_high_resource_pods para detectar si hay saturación de CPU.
+- CrashLoopBackOff → combinar analyze_pod_health + search_errors_in_loki para ver correlación entre métricas y errores.
 
 EJEMPLOS DE DIAGNÓSTICO RÁPIDO:
 - ImagePullBackOff → la imagen no existe o está mal tageada → helm_upgrade con la imagen correcta.
@@ -440,6 +512,26 @@ class ReActAgent:
                         args["namespace"],
                         args.get("pod"),
                         args.get("since", "24h")
+                    )
+                case "query_prometheus":
+                    return k.query_prometheus(
+                        args["query"],
+                        args.get("time_range", "5m")
+                    )
+                case "get_pod_metrics":
+                    return k.get_pod_metrics(
+                        args["namespace"],
+                        args["pod"]
+                    )
+                case "get_high_resource_pods":
+                    return k.get_high_resource_pods(
+                        args.get("namespace"),
+                        args.get("threshold", 0.8)
+                    )
+                case "analyze_pod_health":
+                    return k.analyze_pod_health(
+                        args["namespace"],
+                        args["pod"]
                     )
                 case "finish":
                     return "OK"

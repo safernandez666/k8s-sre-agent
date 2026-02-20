@@ -3,3 +3,4 @@ __pycache__/
 .env
 metallb-config.yaml
 grafana-ingress.yaml
+prometheus-cr.yaml
