@@ -4,3 +4,5 @@ __pycache__/
 metallb-config.yaml
 grafana-ingress.yaml
 prometheus-cr.yaml
+prd.yaml
+srv-monitoring.yaml

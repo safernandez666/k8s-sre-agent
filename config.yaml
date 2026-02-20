@@ -4,7 +4,7 @@ kimi:
   base_url: "http://localhost:11434/v1"
 
 kubernetes:
-  namespace: "monitoring,default,kube-system"
+  namespace: "monitoring,default,kube-system,prd"
   kubeconfig: null  # null = usa el contexto actual (~/.kube/config)
 
 agent:
@@ -21,9 +21,9 @@ wazuh:
   enabled: false             # activar cuando esté listo
 
 loki:
-  url: "http://loki.monitoring.svc.cluster.local:3100"
+  url: "http://192.168.1.241:3100"
   enabled: true              # Loki activado para logs históricos
 
 prometheus:
-  url: "http://localhost:9090"
+  url: "http://192.168.1.242:9090"
   enabled: true

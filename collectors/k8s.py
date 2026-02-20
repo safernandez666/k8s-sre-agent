@@ -5,6 +5,8 @@ No requiere el SDK de kubernetes, funciona con cualquier kubeconfig.
 """
 import subprocess
 import json
+import re as _re
+import time as _time
 import yaml
 import logging
 import requests
@@ -40,6 +42,7 @@ class K8sCollector:
         self.namespace = cfg.get("namespace", "monitoring")
         self.kubeconfig = cfg.get("kubeconfig")
         self.loki_url = cfg.get("loki_url", "http://loki.monitoring.svc.cluster.local:3100")
+        self.prometheus_url = cfg.get("prometheus_url", "http://localhost:9090")
         self._base = ["kubectl"]
         if self.kubeconfig:
             self._base += ["--kubeconfig", self.kubeconfig]
@@ -203,7 +206,7 @@ class K8sCollector:
         # Construir query de LogQL
         if pod:
             # Escapar caracteres especiales en el nombre del pod
-            pod_filter = f'pod=~"{pod}"'
+            pod_filter = f', pod=~"{pod}"'
         else:
             pod_filter = ''
         
@@ -287,18 +290,25 @@ class K8sCollector:
             query: Query PromQL (ej: 'rate(container_cpu_usage_seconds_total[5m])')
             time_range: Rango de tiempo para queries de rango (ej: "5m", "1h")
         """
-        prometheus_url = "http://prometheus-kube-prometheus-prometheus:9090"
+        prometheus_url = self.prometheus_url
         
         try:
             # Determinar si es query instantánea o de rango
             if time_range:
-                end_time = "now()"
-                start_time = f"{time_range}"
+                end_ts = _time.time()
+                # Parsear duración relativa (ej: "5m", "1h", "1d") a segundos
+                m = _re.match(r'^(\d+)([smhd])$', time_range)
+                if m:
+                    val, unit = int(m.group(1)), m.group(2)
+                    multiplier = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
+                    start_ts = end_ts - val * multiplier[unit]
+                else:
+                    start_ts = end_ts - 300  # fallback: 5 minutos
                 url = f"{prometheus_url}/api/v1/query_range"
                 params = {
                     'query': query,
-                    'start': start_time,
-                    'end': end_time,
+                    'start': start_ts,
+                    'end': end_ts,
                     'step': '15s'
                 }
             else:

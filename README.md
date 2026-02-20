@@ -104,7 +104,7 @@ kimi:
   base_url: "http://localhost:11434/v1"
 
 kubernetes:
-  namespace: "monitoring,default,kube-system"
+  namespace: "monitoring,default,kube-system,prd"
   kubeconfig: null         # null = usa ~/.kube/config
 
 agent:
@@ -113,12 +113,12 @@ agent:
   max_iterations: 8        # máximo pasos ReAct
   dry_run: false
 
-📜 loki:
-  url: "http://loki.monitoring.svc.cluster.local:3100"
+loki:
+  url: "http://<LOKI_LB_IP>:3100"
   enabled: true            # true = usa logs históricos
 
-📊 prometheus:
-  url: "http://prometheus-kube-prometheus-prometheus:9090"
+prometheus:
+  url: "http://<PROMETHEUS_LB_IP>:9090"
   enabled: true            # true = usa métricas
 ```
 
@@ -245,7 +245,48 @@ helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
   --namespace monitoring
 ```
 
-### 2️⃣ Agregar Prometheus como Data Source en Grafana
+### 2️⃣ Exponer Prometheus y Loki con LoadBalancer
+
+Para que el agente (corriendo fuera del cluster) pueda alcanzar los servicios:
+
+```yaml
+# srv-monitoring.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki-lb
+  namespace: monitoring
+spec:
+  type: LoadBalancer
+  selector:
+    app: loki
+  ports:
+  - port: 3100
+    targetPort: 3100
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-lb
+  namespace: monitoring
+spec:
+  type: LoadBalancer
+  selector:
+    app: prometheus
+  ports:
+  - port: 9090
+    targetPort: 9090
+```
+
+```bash
+kubectl apply -f srv-monitoring.yaml
+# Verificar las IPs asignadas por MetalLB
+kubectl get svc -n monitoring loki-lb prometheus-lb
+```
+
+Luego actualizar `config.yaml` con las IPs asignadas.
+
+### 3️⃣ Agregar Prometheus como Data Source en Grafana
 
 | Campo | Valor |
 |-------|-------|
@@ -315,8 +356,12 @@ kubectl exec -it -n monitoring deployment/prometheus-grafana -- \
 # Verificar que Prometheus esté corriendo
 kubectl get pods -n monitoring | grep prometheus
 
-# Verificar servicio
-kubectl get svc -n monitoring prometheus-kube-prometheus-prometheus
+# Verificar servicios LoadBalancer
+kubectl get svc -n monitoring loki-lb prometheus-lb
+
+# Probar conectividad desde fuera del cluster
+curl http://<PROMETHEUS_LB_IP>:9090/api/v1/status/buildinfo
+curl http://<LOKI_LB_IP>:3100/ready
 ```
 
 ## 📄 Licencia

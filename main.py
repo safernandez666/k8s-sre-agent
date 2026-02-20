@@ -56,7 +56,12 @@ def main():
     if cfg.get('loki', {}).get('enabled', False):
         cfg['kubernetes']['loki_url'] = cfg['loki']['url']
         log.info(f"Loki integration enabled: {cfg['loki']['url']}")
-    
+
+    # Pasar configuración de Prometheus a kubernetes si está habilitado
+    if cfg.get('prometheus', {}).get('enabled', False):
+        cfg['kubernetes']['prometheus_url'] = cfg['prometheus']['url']
+        log.info(f"Prometheus integration enabled: {cfg['prometheus']['url']}")
+
     k8s   = K8sCollector(cfg['kubernetes'])
     agent = ReActAgent(cfg, k8s, log_callback=log.info)
 
