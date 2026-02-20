@@ -441,7 +441,9 @@ class ReActAgent:
     def __init__(self, cfg: dict, k8s_collector, log_callback: Callable = None):
         self.client = OpenAI(
             api_key=cfg['kimi']['api_key'],
-            base_url=cfg['kimi']['base_url']
+            base_url=cfg['kimi']['base_url'],
+            timeout=120.0,
+            max_retries=3
         )
         self.model = cfg['kimi']['model']
         self.k8s = k8s_collector
@@ -547,6 +549,11 @@ class ReActAgent:
                 # Ejecutar la herramienta
                 result = self._execute_tool(fn_name, fn_args)
                 steps.append({"action": fn_name, "args": fn_args, "result": result[:500]})
+
+                # Después de una acción, el estado del cluster cambió:
+                # limpiar historial de observaciones para permitir re-verificar
+                if fn_name in _ACTION_TOOLS:
+                    previous_calls = {c for c in previous_calls if c.split(":")[0] in _ACTION_TOOLS}
 
                 # Si es finish, terminamos
                 if fn_name == "finish":

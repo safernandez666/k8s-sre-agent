@@ -102,9 +102,9 @@ llm:
     model: "qwen2.5-coder:7b"
     base_url: "http://localhost:11434/v1"
   kimi:
-    api_key: "sk-TU-API-KEY"             # API key de Kimi (moonshot.cn)
-    model: "moonshot-v1-8k"
-    base_url: "https://api.moonshot.cn/v1"
+    api_key: "sk-TU-API-KEY"             # API key de Kimi (moonshot.ai)
+    model: "kimi-k2-turbo-preview"
+    base_url: "https://api.moonshot.ai/v1"
 
 kubernetes:
   namespace: "monitoring,default,kube-system,prd"
