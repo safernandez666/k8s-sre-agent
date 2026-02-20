@@ -1,85 +1,87 @@
-# K8s SRE/SecOps Agent
+# 🚀 K8s SRE/SecOps Agent
 
-Agente ReAct (Reason → Act → Observe) para diagnóstico y remediación autónoma
+🤖 Agente ReAct (Reason → Act → Observe) para diagnóstico y remediación autónoma
 de incidentes en Kubernetes, potenciado por LLM (compatible con Ollama, Kimi, OpenAI, etc.)
 
-## Arquitectura
+## 🏗️ Arquitectura
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    LOOP CONTINUO (30s)                       │
+│                    LOOP CONTINUO (30s) ⏱️                     │
 │                                                              │
-│   ClusterMonitor                                             │
-│   ─────────────                                              │
+│   🔍 ClusterMonitor                                          │
+│   ─────────────────                                          │
 │   get_unhealthy_pods()                                       │
 │          │                                                   │
-│          ▼ (CrashLoopBackOff / OOMKilled / etc.)             │
+│          ▼ (CrashLoopBackOff / OOMKilled / etc.) 🚨          │
 │                                                              │
 │   ┌──────────────────────────────────────────────┐           │
-│   │           AGENTE ReAct (LLM)                  │           │
+│   │           🤖 AGENTE ReAct (LLM)               │           │
 │   │                                              │           │
-│   │  ITER 1: describe_pod()    ← OBSERVE         │           │
-│   │  ITER 2: query_loki()      ← OBSERVE (logs)  │           │
-│   │  ITER 3: get_pod_logs()    ← OBSERVE         │           │
-│   │  ITER 4: check_rbac()      ← OBSERVE         │           │
-│   │  ITER 5: helm_upgrade()    ← ACT             │           │
-│   │  ITER 6: get_events()      ← VERIFY          │           │
-│   │          finish(resolved=True)               │           │
+│   │  ITER 1: describe_pod()    ← 👁️ OBSERVE      │           │
+│   │  ITER 2: query_prometheus()← 📊 METRICS      │           │
+│   │  ITER 3: query_loki()      ← 📜 LOGS         │           │
+│   │  ITER 4: get_pod_logs()    ← 👁️ OBSERVE      │           │
+│   │  ITER 5: helm_upgrade()    ← 🔧 ACT          │           │
+│   │  ITER 6: get_events()      ← ✅ VERIFY       │           │
+│   │          finish(resolved=True) 🎯            │           │
 │   └──────────────────────────────────────────────┘           │
 │                          ▲                                   │
 │                          │                                   │
-│                   ┌──────┴──────┐                            │
-│                   │    Loki     │ ← Logs históricos          │
-│                   │  (LogsQL)   │    24h/7d/30d              │
-│                   └─────────────┘                            │
+│         ┌────────────────┴────────────────┐                  │
+│         │   📦 Prometheus  +  📜 Loki      │                  │
+│         │   (Metrics)       (Logs)         │                  │
+│         │   CPU/Mem/Restarts  24h/7d/30d   │                  │
+│         └───────────────────────────────────┘                  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Requisitos
+## 📋 Requisitos
 
-- Python 3.10+
-- Kubernetes cluster (kubectl configurado)
-- Ollama (para correr el LLM localmente) o API key de Kimi/OpenAI
-- (Opcional) Loki instalado en el cluster para logs históricos
+- 🐍 Python 3.10+
+- ☸️ Kubernetes cluster (kubectl configurado)
+- 🦙 Ollama (para correr el LLM localmente) o API key de Kimi/OpenAI
+- 📜 (Opcional) Loki instalado en el cluster para logs históricos
+- 📊 (Opcional) Prometheus instalado para métricas
 
-## Instalación
+## 🚀 Instalación
 
-### 1. Clonar el repositorio
+### 1️⃣ Clonar el repositorio
 
 ```bash
 git clone https://github.com/safernandez666/k8s-sre-agent.git
 cd k8s-sre-agent
 ```
 
-### 2. Instalar dependencias
+### 2️⃣ Instalar dependencias
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Instalar Ollama (opción local, recomendado)
+### 3️⃣ Instalar Ollama (opción local, recomendado)
 
-**Linux/Mac:**
+**🐧 Linux/Mac:**
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-**Windows:**
+**🪟 Windows:**
 Descargar desde: https://ollama.com/download/windows
 
-### 4. Descargar un modelo con Ollama
+### 4️⃣ Descargar un modelo con Ollama
 
 ```bash
-# Modelo recomendado (rápido y bueno para coding)
+# 🌟 Modelo recomendado (rápido y bueno para coding)
 ollama pull qwen2.5-coder:7b
 
 # Alternativas:
-# ollama pull llama3.2:3b        # Más liviano
-# ollama pull codellama:7b       # Especializado en código
-# ollama pull mistral:7b         # Buen balance
+# ollama pull llama3.2:3b        # Más liviano 🪶
+# ollama pull codellama:7b       # Especializado en código 💻
+# ollama pull mistral:7b         # Buen balance ⚖️
 ```
 
-### 5. Verificar que Ollama esté corriendo
+### 5️⃣ Verificar que Ollama esté corriendo
 
 ```bash
 ollama list
@@ -89,11 +91,11 @@ ollama list
 ollama run qwen2.5-coder:7b "Hola"
 ```
 
-## Configuración
+## ⚙️ Configuración
 
 Editá `config.yaml` con tu configuración:
 
-### Opción A: Usar Ollama (local, gratis)
+### 🔧 Opción A: Usar Ollama (local, gratis)
 
 ```yaml
 kimi:
@@ -111,12 +113,16 @@ agent:
   max_iterations: 8        # máximo pasos ReAct
   dry_run: false
 
-loki:
+📜 loki:
   url: "http://loki.monitoring.svc.cluster.local:3100"
   enabled: true            # true = usa logs históricos
+
+📊 prometheus:
+  url: "http://prometheus-kube-prometheus-prometheus:9090"
+  enabled: true            # true = usa métricas
 ```
 
-### Opción B: Usar Kimi (API en la nube)
+### ☁️ Opción B: Usar Kimi (API en la nube)
 
 ```yaml
 kimi:
@@ -125,41 +131,45 @@ kimi:
   base_url: "https://api.moonshot.cn/v1"
 ```
 
-## Uso
+## 🎮 Uso
 
 ```bash
-# Monitor continuo (pregunta antes de remediar)
+# 🔄 Monitor continuo (pregunta antes de remediar)
 python main.py
 
-# Monitor continuo autónomo (sin confirmación)
+# 🤖 Monitor continuo autónomo (sin confirmación)
 python main.py --auto
 
-# Simular sin ejecutar nada
+# 🧪 Simular sin ejecutar nada
 python main.py --dry-run --auto
 
-# Fix directo para un problema específico
+# 🎯 Fix directo para un problema específico
 python main.py --fix "Pod prometheus-grafana en CrashLoopBackOff"
 
-# Un solo ciclo de detección
+# ▶️ Un solo ciclo de detección
 python main.py --once
 ```
 
-## Herramientas disponibles para el agente
+## 🛠️ Herramientas disponibles para el agente
 
-| Herramienta           | Tipo      | Descripción                                          |
-|----------------------|-----------|------------------------------------------------------|
-| get_pod_logs         | Observar  | Logs del contenedor (último crash)                   |
-| describe_pod         | Observar  | kubectl describe pod                                 |
-| get_events           | Observar  | Eventos del namespace/recurso                        |
-| check_rbac           | Observar  | Permisos del ServiceAccount                          |
-| **query_loki**       | Observar  | Logs históricos de Loki (LogQL)                      |
-| **search_errors_in_loki** | Observar | Busca patrones de error en logs históricos      |
-| helm_upgrade         | Actuar    | Modifica valores del chart                           |
-| kubectl_apply        | Actuar    | Aplica manifest YAML                                 |
-| rollout_restart      | Actuar    | Reinicio graceful de deployment                      |
-| finish               | Terminar  | Cierra el loop con resultado                         |
+| Herramienta | Tipo | Descripción |
+|-------------|------|-------------|
+| 👁️ `get_pod_logs` | **Observe** | Logs del contenedor (último crash) |
+| 👁️ `describe_pod` | **Observe** | kubectl describe pod |
+| 👁️ `get_events` | **Observe** | Eventos del namespace/recurso |
+| 👁️ `check_rbac` | **Observe** | Permisos del ServiceAccount |
+| 📜 `query_loki` | **Observe** | Logs históricos de Loki (LogQL) |
+| 📜 `search_errors_in_loki` | **Observe** | Busca patrones de error en logs |
+| 📊 `query_prometheus` | **Observe** | Ejecutar queries PromQL |
+| 📊 `get_pod_metrics` | **Observe** | CPU, memoria, restarts de un pod |
+| 📊 `get_high_resource_pods` | **Observe** | Detecta pods con >80% CPU/memoria |
+| 📊 `analyze_pod_health` | **Observe** | Análisis completo de salud del pod |
+| 🔧 `helm_upgrade` | **Act** | Modifica valores del chart |
+| 🔧 `kubectl_apply` | **Act** | Aplica manifest YAML |
+| 🔧 `rollout_restart` | **Act** | Reinicio graceful de deployment |
+| 🏁 `finish` | **Terminate** | Cierra el loop con resultado |
 
-### Ejemplos de consultas Loki
+### 📝 Ejemplos de consultas Loki
 
 El agente puede usar LogQL para obtener contexto histórico:
 
@@ -174,11 +184,29 @@ El agente puede usar LogQL para obtener contexto histórico:
 {namespace="kube-system", pod=~"calico.*"}
 ```
 
-## Integración con Loki + Grafana (Opcional pero recomendado)
+### 📊 Ejemplos de consultas Prometheus
+
+El agente puede usar PromQL para obtener métricas:
+
+```promql
+# Uso de CPU por pod
+rate(container_cpu_usage_seconds_total{namespace="monitoring"}[5m])
+
+# Uso de memoria
+container_memory_usage_bytes{namespace="monitoring"}
+
+# Restarts de contenedores
+kube_pod_container_status_restarts_total{namespace="monitoring"}
+
+# Pods con alta utilización de CPU
+rate(container_cpu_usage_seconds_total[5m]) > 0.8
+```
+
+## 📜 Integración con Loki + Grafana (Opcional pero recomendado)
 
 Para que el agente tenga acceso a logs históricos:
 
-### 1. Instalar Loki
+### 1️⃣ Instalar Loki
 
 ```bash
 helm repo add grafana https://grafana.github.io/helm-charts
@@ -187,7 +215,7 @@ helm upgrade --install loki grafana/loki-stack \
   --set promtail.enabled=true
 ```
 
-### 2. Exponer Grafana con Ingress
+### 2️⃣ Exponer Grafana con Ingress
 
 ```bash
 # Aplicar configuración de MetalLB + Ingress
@@ -197,7 +225,7 @@ kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/cont
 kubectl apply -f loki-datasource.yaml  # Ver archivo en repo
 ```
 
-### 3. Configurar /etc/hosts
+### 3️⃣ Configurar /etc/hosts
 
 ```
 192.168.1.240   grafana.local
@@ -205,31 +233,51 @@ kubectl apply -f loki-datasource.yaml  # Ver archivo en repo
 
 Acceder a: http://grafana.local
 
-## Roadmap
+## 📊 Integración con Prometheus (Opcional pero recomendado)
+
+Para que el agente tenga acceso a métricas:
+
+### 1️⃣ Instalar Prometheus
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+  --namespace monitoring
+```
+
+### 2️⃣ Agregar Prometheus como Data Source en Grafana
+
+| Campo | Valor |
+|-------|-------|
+| Name | `Prometheus` |
+| URL | `http://prometheus-kube-prometheus-prometheus:9090` |
+| Access | Server (default) |
+
+## 🗺️ Roadmap
 
 ```
 v0.1 (actual) ✅
-└── ReAct sobre kubectl
-└── Detección de CrashLoop / OOMKill / ImagePull
-└── Fix de RBAC, Helm, manifests
-└── Integración Loki para logs históricos ✅
+├── 🤖 ReAct sobre kubectl
+├── 🚨 Detección de CrashLoop / OOMKill / ImagePull
+├── 🔧 Fix de RBAC, Helm, manifests
+├── 📜 Integración Loki para logs históricos ✅
+└── 📊 Integración Prometheus para métricas ✅
 
 v0.2 (próximo)
-└── Integración Wazuh (alertas EDR)
-└── Memoria de incidentes (SQLite)
-└── Notificaciones (Slack/webhook)
-└── Dashboard web de incidentes
+├── 🔒 Integración Wazuh (alertas EDR)
+├── 💾 Memoria de incidentes (SQLite)
+├── 📢 Notificaciones (Slack/webhook)
+└── 📈 Dashboard web de incidentes
 
 v0.3
-└── Gestión de identidades (IAM)
-└── Correlación usuario → alerta → pod
-└── MITRE ATT&CK mapping
-└── Multi-agente (un agente por nodo)
+├── 👤 Gestión de identidades (IAM)
+├── 🔗 Correlación usuario → alerta → pod
+└── 🛡️ MITRE ATT&CK mapping
 ```
 
-## Troubleshooting
+## 🐛 Troubleshooting
 
-### Ollama no responde
+### 🦙 Ollama no responde
 
 ```bash
 # Verificar que ollama esté corriendo
@@ -239,7 +287,7 @@ curl http://localhost:11434/api/tags
 ollama serve
 ```
 
-### El agente no encuentra el cluster
+### ☸️ El agente no encuentra el cluster
 
 ```bash
 # Verificar kubectl
@@ -250,7 +298,7 @@ kubernetes:
   kubeconfig: "/ruta/a/tu/config"
 ```
 
-### Loki no conecta
+### 📜 Loki no conecta
 
 ```bash
 # Verificar que Loki esté corriendo
@@ -261,6 +309,16 @@ kubectl exec -it -n monitoring deployment/prometheus-grafana -- \
   wget -qO- http://loki.monitoring.svc.cluster.local:3100/ready
 ```
 
-## Licencia
+### 📊 Prometheus no conecta
 
-MIT
+```bash
+# Verificar que Prometheus esté corriendo
+kubectl get pods -n monitoring | grep prometheus
+
+# Verificar servicio
+kubectl get svc -n monitoring prometheus-kube-prometheus-prometheus
+```
+
+## 📄 Licencia
+
+📝 MIT
