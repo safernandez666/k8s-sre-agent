@@ -127,6 +127,40 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "query_loki",
+            "description": "Consulta logs históricos en Loki. Útil para obtener contexto de errores pasados y ver logs de más de un contenedor. Usar cuando necesites ver logs de más de 1 hora atrás o buscar patrones de error históricos.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "namespace": {"type": "string", "description": "Namespace del pod"},
+                    "pod":       {"type": "string", "description": "Nombre del pod o patrón regex (opcional)"},
+                    "query":     {"type": "string", "description": "Filtro adicional de LogQL (ej: '|= \"error\"')"},
+                    "limit":     {"type": "integer", "description": "Máximo de líneas a retornar", "default": 100},
+                    "since":     {"type": "string", "description": "Rango de tiempo (1h, 30m, 1d, 7d)", "default": "1h"}
+                },
+                "required": ["namespace"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_errors_in_loki",
+            "description": "Busca patrones de error en logs históricos de Loki. Útil para diagnosticar problemas recurrentes o encontrar la causa raíz de fallos pasados.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "namespace": {"type": "string", "description": "Namespace a consultar"},
+                    "pod":       {"type": "string", "description": "Nombre del pod (opcional)"},
+                    "since":     {"type": "string", "description": "Cuánto tiempo atrás buscar (ej: 24h, 7d)", "default": "24h"}
+                },
+                "required": ["namespace"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "finish",
             "description": "Llama cuando el problema está resuelto o cuando no hay más acciones posibles.",
             "parameters": {
@@ -221,7 +255,8 @@ Tu trabajo es diagnosticar y remediar problemas del cluster de forma autónoma u
 
 PROCESO OBLIGATORIO:
 1. OBSERVAR (máximo 2-3 llamadas): Recolecta información con get_pod_logs, describe_pod, get_events.
-   NO repitas herramientas de observación si ya tienes suficiente información.
+   - USA query_loki o search_errors_in_loki cuando necesites ver logs históricos (más de 1 hora) o buscar patrones de error.
+   - NO repitas herramientas de observación si ya tienes suficiente información.
 2. RAZONAR: Identifica la causa raíz con la información que ya tienes.
 3. ACTUAR: Aplica el fix más conservador (helm_upgrade, kubectl_apply, rollout_restart).
 4. VERIFICAR: Confirma que el fix funcionó (describe_pod o get_events).
@@ -234,6 +269,10 @@ REGLAS CRÍTICAS:
 - Prefiere fixes no destructivos (helm_upgrade > delete pod).
 - Si el fix requiere kubectl_apply con RBAC, genera el manifest correcto y completo.
 - SIEMPRE termina llamando a finish() con resolved=true/false y un resumen técnico.
+
+CUÁNDO USAR LOKI (logs históricos):
+- Usa query_loki cuando: necesites ver logs de más de 1 hora atrás, buscar en múltiples pods, o filtrar por patrones específicos.
+- Usa search_errors_in_loki cuando: sospeches de errores recurrentes, necesites ver el historial de fallos, o get_pod_logs no muestre suficiente información.
 
 EJEMPLOS DE DIAGNÓSTICO RÁPIDO:
 - ImagePullBackOff → la imagen no existe o está mal tageada → helm_upgrade con la imagen correcta.
@@ -388,6 +427,20 @@ class ReActAgent:
                     return k.kubectl_apply(args["manifest_yaml"], dry_run=dry)
                 case "rollout_restart":
                     return k.rollout_restart(args["namespace"], args["resource"], dry_run=dry)
+                case "query_loki":
+                    return k.query_loki(
+                        args["namespace"],
+                        args.get("pod"),
+                        args.get("query"),
+                        args.get("limit", 100),
+                        args.get("since", "1h")
+                    )
+                case "search_errors_in_loki":
+                    return k.search_errors_in_loki(
+                        args["namespace"],
+                        args.get("pod"),
+                        args.get("since", "24h")
+                    )
                 case "finish":
                     return "OK"
                 case _:

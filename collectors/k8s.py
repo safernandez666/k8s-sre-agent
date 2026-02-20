@@ -7,6 +7,8 @@ import subprocess
 import json
 import yaml
 import logging
+import requests
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -37,6 +39,7 @@ class K8sCollector:
     def __init__(self, cfg: dict):
         self.namespace = cfg.get("namespace", "monitoring")
         self.kubeconfig = cfg.get("kubeconfig")
+        self.loki_url = cfg.get("loki_url", "http://loki.monitoring.svc.cluster.local:3100")
         self._base = ["kubectl"]
         if self.kubeconfig:
             self._base += ["--kubeconfig", self.kubeconfig]
@@ -180,3 +183,95 @@ class K8sCollector:
             args.append("--dry-run=client")
         stdout, stderr, rc = self._kubectl(*args)
         return stdout if rc == 0 else f"ERROR: {stderr}"
+
+
+    # ─── LOKI INTEGRATION ─────────────────────────────────────────
+
+    def query_loki(self, namespace: str, pod: str = None, 
+                   query: str = None, limit: int = 100, 
+                   since: str = "1h") -> str:
+        """
+        Consulta logs en Loki para obtener contexto histórico.
+        
+        Args:
+            namespace: Namespace a consultar
+            pod: Nombre del pod (opcional, puede ser regex)
+            query: Query de LogQL adicional (ej: '|= "error"')
+            limit: Cantidad máxima de líneas
+            since: Rango de tiempo (ej: "1h", "30m", "1d")
+        """
+        # Construir query de LogQL
+        if pod:
+            # Escapar caracteres especiales en el nombre del pod
+            pod_filter = f'pod=~"{pod}"'
+        else:
+            pod_filter = ''
+        
+        base_query = f'{{namespace="{namespace}"{pod_filter}}}'
+        
+        if query:
+            base_query = f'{base_query} {query}'
+        
+        # Construir URL
+        params = {
+            'query': base_query,
+            'limit': limit,
+            'since': since
+        }
+        
+        try:
+            # Intentar consultar Loki
+            loki_url = f"{self.loki_url}/loki/api/v1/query_range"
+            response = requests.get(loki_url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get('data', {}).get('result', [])
+                
+                if not results:
+                    return f"No se encontraron logs en Loki para: {base_query}"
+                
+                # Formatear resultados
+                logs = []
+                for stream in results:
+                    labels = stream.get('stream', {})
+                    values = stream.get('values', [])
+                    for timestamp, log_line in values:
+                        logs.append(f"[{timestamp}] {log_line}")
+                
+                return "\n".join(logs[:limit]) if logs else "No hay logs disponibles"
+            else:
+                return f"Error consultando Loki (HTTP {response.status_code}): {response.text[:200]}"
+                
+        except requests.exceptions.ConnectionError:
+            return f"Error: No se pudo conectar a Loki en {self.loki_url}. Verificar que Loki esté corriendo."
+        except Exception as e:
+            return f"Error consultando Loki: {e}"
+
+    def search_errors_in_loki(self, namespace: str, pod: str = None, 
+                              since: str = "24h") -> str:
+        """
+        Busca errores específicos en logs de Loki.
+        Útil para encontrar patrones de fallos históricos.
+        """
+        error_patterns = [
+            '|= "error"',
+            '|= "ERROR"',
+            '|= "exception"',
+            '|= "Exception"',
+            '|= "panic"',
+            '|= "fatal"',
+            '|= "CRASH"'
+        ]
+        
+        all_errors = []
+        for pattern in error_patterns:
+            result = self.query_loki(namespace, pod, query=pattern, 
+                                    limit=50, since=since)
+            if result and not result.startswith("Error") and not result.startswith("No se"):
+                all_errors.append(f"--- Patrón: {pattern} ---")
+                all_errors.append(result)
+        
+        if all_errors:
+            return "\n\n".join(all_errors[:500])  # Limitar tamaño
+        return f"No se encontraron errores en logs de Loki para {namespace}/{pod or 'todos los pods'}"

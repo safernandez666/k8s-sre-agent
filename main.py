@@ -52,6 +52,11 @@ def main():
         cfg['agent']['auto_remediate'] = True
 
     # Inicializar componentes
+    # Pasar configuración de Loki a kubernetes si está habilitado
+    if cfg.get('loki', {}).get('enabled', False):
+        cfg['kubernetes']['loki_url'] = cfg['loki']['url']
+        log.info(f"Loki integration enabled: {cfg['loki']['url']}")
+    
     k8s   = K8sCollector(cfg['kubernetes'])
     agent = ReActAgent(cfg, k8s, log_callback=log.info)
 

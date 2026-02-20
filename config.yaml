@@ -21,8 +21,8 @@ wazuh:
   enabled: false             # activar cuando esté listo
 
 loki:
-  url: "http://localhost:3100"
-  enabled: false             # activar después de instalar Loki
+  url: "http://loki.monitoring.svc.cluster.local:3100"
+  enabled: true              # Loki activado para logs históricos
 
 prometheus:
   url: "http://localhost:9090"
