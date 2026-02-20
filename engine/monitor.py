@@ -27,6 +27,9 @@ class ClusterMonitor:
 
     def _get_namespaces(self) -> list[str]:
         """Resuelve la configuración de namespace a una lista concreta."""
+        if not self.namespace:
+            log.warning("Namespace no configurado, usando 'default'")
+            return ["default"]
         if self.namespace == "*":
             stdout, _, _ = self.k8s._kubectl("get", "namespaces", "-o", "jsonpath={.items[*].metadata.name}")
             return stdout.strip().split() if stdout.strip() else ["default"]

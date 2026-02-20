@@ -6,8 +6,11 @@ No requiere el SDK de kubernetes, funciona con cualquier kubeconfig.
 import subprocess
 import json
 import yaml
+import logging
 from dataclasses import dataclass, field
 from typing import Optional
+
+log = logging.getLogger("k8s")
 
 
 @dataclass
@@ -24,6 +27,9 @@ class PodIssue:
 def _run(cmd: list[str]) -> tuple[str, str, int]:
     """Ejecuta un comando y retorna (stdout, stderr, returncode)."""
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        log.warning(f"Command failed ({result.returncode}): {' '.join(cmd[:5])}...")
+        log.debug(f"stderr: {result.stderr[:500]}")
     return result.stdout, result.stderr, result.returncode
 
 
@@ -41,38 +47,50 @@ class K8sCollector:
     # ─── OBSERVACIÓN ──────────────────────────────────────────────
 
     def get_unhealthy_pods(self, namespace: str = None) -> list[PodIssue]:
-        ns = namespace or self.namespace
-        stdout, _, _ = self._kubectl(
-            "get", "pods", "-n", ns, "-o", "json"
-        )
-        issues = []
-        try:
-            data = json.loads(stdout)
-        except json.JSONDecodeError:
-            return issues
+        """
+        Obtiene pods en mal estado. Soporta múltiples namespaces separados por coma.
+        """
+        ns_param = namespace or self.namespace
+        # Soportar namespaces separados por coma (ej: "monitoring,default")
+        namespaces = [ns.strip() for ns in ns_param.split(",") if ns.strip()]
+        
+        all_issues = []
+        for ns in namespaces:
+            stdout, stderr, rc = self._kubectl(
+                "get", "pods", "-n", ns, "-o", "json"
+            )
+            if rc != 0:
+                log.warning(f"No se pudo obtener pods en namespace '{ns}': {stderr[:200]}")
+                continue
+                
+            try:
+                data = json.loads(stdout)
+            except json.JSONDecodeError as e:
+                log.warning(f"Error parseando JSON para namespace '{ns}': {e}")
+                continue
 
-        for pod in data.get("items", []):
-            pod_name = pod["metadata"]["name"]
-            for cs in pod.get("status", {}).get("containerStatuses", []):
-                waiting = cs.get("state", {}).get("waiting", {})
-                terminated = cs.get("state", {}).get("terminated", {})
-                reason = waiting.get("reason") or terminated.get("reason", "")
-                bad_states = {
-                    "CrashLoopBackOff", "OOMKilled", "ImagePullBackOff",
-                    "ErrImagePull", "Error", "CreateContainerConfigError",
-                    "RunContainerError"
-                }
-                if reason in bad_states:
-                    issues.append(PodIssue(
-                        namespace=ns,
-                        pod=pod_name,
-                        container=cs["name"],
-                        state=reason,
-                        restart_count=cs.get("restartCount", 0),
-                        reason=reason,
-                        message=waiting.get("message") or terminated.get("message", "")
-                    ))
-        return issues
+            for pod in data.get("items", []):
+                pod_name = pod["metadata"]["name"]
+                for cs in pod.get("status", {}).get("containerStatuses", []):
+                    waiting = cs.get("state", {}).get("waiting", {})
+                    terminated = cs.get("state", {}).get("terminated", {})
+                    reason = waiting.get("reason") or terminated.get("reason", "")
+                    bad_states = {
+                        "CrashLoopBackOff", "OOMKilled", "ImagePullBackOff",
+                        "ErrImagePull", "Error", "CreateContainerConfigError",
+                        "RunContainerError"
+                    }
+                    if reason in bad_states:
+                        all_issues.append(PodIssue(
+                            namespace=ns,
+                            pod=pod_name,
+                            container=cs["name"],
+                            state=reason,
+                            restart_count=cs.get("restartCount", 0),
+                            reason=reason,
+                            message=waiting.get("message") or terminated.get("message", "")
+                        ))
+        return all_issues
 
     def get_pod_logs(self, namespace: str, pod: str, container: str,
                      previous: bool = True, tail: int = 50) -> str:
