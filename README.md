@@ -5,35 +5,56 @@ de incidentes en Kubernetes, potenciado por LLM (compatible con Ollama, Kimi, Op
 
 ## 🏗️ Arquitectura
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    LOOP CONTINUO (30s) ⏱️                     │
-│                                                              │
-│   🔍 ClusterMonitor                                          │
-│   ─────────────────                                          │
-│   get_unhealthy_pods()                                       │
-│          │                                                   │
-│          ▼ (CrashLoopBackOff / OOMKilled / etc.) 🚨          │
-│                                                              │
-│   ┌──────────────────────────────────────────────┐           │
-│   │           🤖 AGENTE ReAct (LLM)               │           │
-│   │                                              │           │
-│   │  ITER 1: describe_pod()    ← 👁️ OBSERVE      │           │
-│   │  ITER 2: query_prometheus()← 📊 METRICS      │           │
-│   │  ITER 3: query_loki()      ← 📜 LOGS         │           │
-│   │  ITER 4: get_pod_logs()    ← 👁️ OBSERVE      │           │
-│   │  ITER 5: helm_upgrade()    ← 🔧 ACT          │           │
-│   │  ITER 6: get_events()      ← ✅ VERIFY       │           │
-│   │          finish(resolved=True) 🎯            │           │
-│   └──────────────────────────────────────────────┘           │
-│                          ▲                                   │
-│                          │                                   │
-│         ┌────────────────┴────────────────┐                  │
-│         │   📦 Prometheus  +  📜 Loki      │                  │
-│         │   (Metrics)       (Logs)         │                  │
-│         │   CPU/Mem/Restarts  24h/7d/30d   │                  │
-│         └───────────────────────────────────┘                  │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph AGENT["🤖 K8s SRE/SecOps Agent"]
+        direction TB
+        MONITOR["🔍 ClusterMonitor\n<i>Poll cada 30s</i>"]
+        DETECT{{"🚨 Pod unhealthy?\n<i>CrashLoop / OOM / ImagePull</i>"}}
+        MONITOR --> DETECT
+    end
+
+    subgraph REACT["🧠 ReAct Loop (LLM)"]
+        direction TB
+        OBSERVE["👁️ OBSERVE\n<code>describe_pod</code>\n<code>get_pod_logs</code>\n<code>get_events</code>"]
+        REASON["🤔 REASON\nIdentificar causa raíz"]
+        ACT["🔧 ACT\n<code>delete_pod + kubectl_apply</code>\n<code>patch_resource</code>\n<code>helm_upgrade</code>\n<code>rollout_restart</code>"]
+        VERIFY["✅ VERIFY\n<code>describe_pod</code>\n<code>get_events</code>"]
+        FINISH(["🏁 finish\n<i>resolved: true/false</i>"])
+        OBSERVE --> REASON --> ACT --> VERIFY --> FINISH
+    end
+
+    subgraph K8S["☸️ Kubernetes Cluster"]
+        direction LR
+        CP["🖥️ srv01\nControl Plane\n<i>192.168.1.100</i>"]
+        W1["🖥️ srv02\nWorker\n<i>192.168.1.101</i>"]
+    end
+
+    subgraph DATA["📡 Data Sources"]
+        direction LR
+        PROM["📊 Prometheus\n<i>Métricas: CPU, Mem, Restarts</i>"]
+        LOKI["📜 Loki\n<i>Logs históricos (LogQL)</i>"]
+    end
+
+    subgraph LLM_PROVIDERS["🧠 LLM Providers"]
+        direction LR
+        OLLAMA["🦙 Ollama\n<i>qwen2.5-coder:7b</i>\n<i>Local, gratis</i>"]
+        KIMI["🌙 Kimi\n<i>kimi-k2-turbo-preview</i>\n<i>API cloud</i>"]
+    end
+
+    DETECT -- "Si" --> REACT
+    DETECT -- "No ✅" --> MONITOR
+    REACT <--> |kubectl| K8S
+    OBSERVE <--> DATA
+    REASON <-.-> LLM_PROVIDERS
+
+    style AGENT fill:#1a1a2e,stroke:#16213e,color:#e0e0e0
+    style REACT fill:#0f3460,stroke:#533483,color:#e0e0e0
+    style K8S fill:#1b4332,stroke:#2d6a4f,color:#e0e0e0
+    style DATA fill:#3a0ca3,stroke:#4361ee,color:#e0e0e0
+    style LLM_PROVIDERS fill:#495057,stroke:#6c757d,color:#e0e0e0
+    style FINISH fill:#2d6a4f,stroke:#40916c,color:#e0e0e0
+    style DETECT fill:#e63946,stroke:#d62828,color:#ffffff
 ```
 
 ## 📋 Requisitos
