@@ -31,6 +31,48 @@ def load_config(path: str = "config.yaml") -> dict:
         return yaml.safe_load(f)
 
 
+def select_llm_provider(cfg: dict, cli_llm: str = None) -> dict:
+    """Selecciona el proveedor de LLM y retorna su configuración."""
+    providers = cfg.get('llm', {})
+    available = list(providers.keys())
+
+    if not available:
+        print("ERROR: No hay proveedores LLM configurados en config.yaml")
+        sys.exit(1)
+
+    # Si se especificó por CLI, usar ese
+    if cli_llm:
+        if cli_llm not in providers:
+            print(f"ERROR: Proveedor '{cli_llm}' no encontrado. Disponibles: {available}")
+            sys.exit(1)
+        return providers[cli_llm], cli_llm
+
+    # Si solo hay uno, usarlo directo
+    if len(available) == 1:
+        name = available[0]
+        return providers[name], name
+
+    # Preguntar al usuario
+    print("\n┌─────────────────────────────────┐")
+    print("│   Seleccionar proveedor LLM     │")
+    print("├─────────────────────────────────┤")
+    for i, name in enumerate(available, 1):
+        model = providers[name].get('model', '?')
+        print(f"│  {i}) {name:<10} ({model})")
+    print("└─────────────────────────────────┘")
+
+    while True:
+        try:
+            choice = input(f"\nElegir [{1}-{len(available)}]: ").strip()
+            idx = int(choice) - 1
+            if 0 <= idx < len(available):
+                name = available[idx]
+                return providers[name], name
+            print(f"Opción inválida. Elegir entre 1 y {len(available)}")
+        except (ValueError, EOFError):
+            print(f"Opción inválida. Elegir entre 1 y {len(available)}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="K8s SRE/SecOps Agent")
     parser.add_argument("--config",   default="config.yaml")
@@ -38,12 +80,18 @@ def main():
     parser.add_argument("--fix",      type=str, help="Descripción del problema a resolver directamente")
     parser.add_argument("--dry-run",  action="store_true", help="Simula sin ejecutar cambios")
     parser.add_argument("--auto",     action="store_true", help="Auto-remediate sin confirmación")
+    parser.add_argument("--llm",      type=str, help="Proveedor LLM (ej: ollama, kimi)")
     args = parser.parse_args()
 
     setup_logging()
     log = logging.getLogger("main")
 
     cfg = load_config(args.config)
+
+    # Seleccionar proveedor LLM
+    llm_cfg, llm_name = select_llm_provider(cfg, args.llm)
+    cfg['kimi'] = llm_cfg  # ReActAgent espera cfg['kimi']
+    log.info(f"LLM provider: {llm_name} | model: {llm_cfg['model']}")
 
     # Overrides desde CLI
     if args.dry_run:

@@ -1,7 +1,12 @@
-kimi:
-  api_key: "ollama"        # puede ser cualquier string, ollama no valida
-  model: "qwen2.5-coder:7b"
-  base_url: "http://localhost:11434/v1"
+llm:
+  ollama:
+    api_key: "ollama"
+    model: "qwen2.5-coder:7b"
+    base_url: "http://localhost:11434/v1"
+  kimi:
+    api_key: "sk-LAyrvERwYfNQW0YObPma47MeOP5ph95SA1slXiqyEenNpuLe"
+    model: "moonshot-v1-8k"
+    base_url: "https://api.moonshot.cn/v1"
 
 kubernetes:
   namespace: "monitoring,default,kube-system,prd"

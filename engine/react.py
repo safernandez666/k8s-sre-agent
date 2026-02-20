@@ -99,7 +99,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "kubectl_apply",
-            "description": "Aplica un manifest YAML al cluster. Usar para crear/modificar recursos RBAC, ConfigMaps, etc.",
+            "description": "Aplica un manifest YAML al cluster. Usar para crear/modificar cualquier recurso: Pods bare, Deployments, RBAC, ConfigMaps, etc. Para pods bare con OOMKilled, genera el manifest completo con limits de memoria más altos. El pod existente se eliminará y recreará.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -121,6 +121,37 @@ TOOLS = [
                     "resource":  {"type": "string", "description": "ej: deployment/prometheus-grafana"}
                 },
                 "required": ["namespace", "resource"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_pod",
+            "description": "Elimina un pod. Necesario antes de kubectl_apply cuando se quiere recrear un pod bare con configuración diferente (ej: nuevos limits de memoria). Para Deployments, preferir rollout_restart.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "namespace": {"type": "string"},
+                    "pod":       {"type": "string", "description": "Nombre del pod a eliminar"}
+                },
+                "required": ["namespace", "pod"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "patch_resource",
+            "description": "Aplica un patch merge a un recurso de Kubernetes (Deployment, StatefulSet, etc). Útil para modificar resources.limits, replicas, imágenes, etc. sin reescribir todo el manifest.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "namespace": {"type": "string"},
+                    "resource":  {"type": "string", "description": "Tipo y nombre, ej: deployment/my-app, statefulset/my-db"},
+                    "patch":     {"type": "object", "description": "Patch JSON merge, ej: {\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"app\",\"resources\":{\"limits\":{\"memory\":\"512Mi\"}}}]}}}}"}
+                },
+                "required": ["namespace", "resource", "patch"]
             }
         }
     },
@@ -277,15 +308,24 @@ def _extract_json_objects(text: str) -> list[str]:
     return results
 
 
-def _parse_tool_call_from_text(text: str):
+_ACTION_TOOLS = {"helm_upgrade", "kubectl_apply", "rollout_restart", "patch_resource", "delete_pod", "finish"}
+
+
+def _parse_tool_call_from_text(text: str, previous_calls: set = None):
     """
     Fallback: algunos modelos locales (ej. qwen via Ollama) devuelven el
     tool call como JSON en msg.content en lugar de usar el campo tool_calls.
     Intenta extraer {"name": "...", "arguments": {...}} del texto.
+
+    Prioriza herramientas de acción sobre observación y evita repetir
+    calls anteriores cuando es posible.
     Retorna una lista de objetos similares a tool_call, o None.
     """
     if not text:
         return None
+
+    previous_calls = previous_calls or set()
+    candidates = []
 
     for raw in _extract_json_objects(text):
         try:
@@ -293,13 +333,29 @@ def _parse_tool_call_from_text(text: str):
         except json.JSONDecodeError:
             continue
         if obj.get("name") in TOOL_NAMES and "arguments" in obj:
-            tc = _SyntheticToolCall(
-                id=f"syn_{uuid.uuid4().hex[:8]}",
-                name=obj["name"],
-                arguments=json.dumps(obj["arguments"], ensure_ascii=False),
-            )
-            return [tc]
-    return None
+            call_key = f"{obj['name']}:{json.dumps(obj['arguments'], sort_keys=True)}"
+            candidates.append((obj, call_key))
+
+    if not candidates:
+        return None
+
+    # Priorizar: 1) acciones no repetidas, 2) cualquier no repetida, 3) primera disponible
+    for obj, key in candidates:
+        if obj["name"] in _ACTION_TOOLS and key not in previous_calls:
+            return [_make_synthetic_tc(obj)]
+    for obj, key in candidates:
+        if key not in previous_calls:
+            return [_make_synthetic_tc(obj)]
+    # Fallback: retornar la primera aunque sea repetida
+    return [_make_synthetic_tc(candidates[0][0])]
+
+
+def _make_synthetic_tc(obj: dict) -> '_SyntheticToolCall':
+    return _SyntheticToolCall(
+        id=f"syn_{uuid.uuid4().hex[:8]}",
+        name=obj["name"],
+        arguments=json.dumps(obj["arguments"], ensure_ascii=False),
+    )
 
 
 class _SyntheticToolCall:
@@ -310,51 +366,72 @@ class _SyntheticToolCall:
         self.type = "function"
 
 
-SYSTEM_PROMPT = """Eres un agente SRE/SecOps experto en Kubernetes y ciberseguridad.
-Tu trabajo es diagnosticar y remediar problemas del cluster de forma autónoma usando las herramientas disponibles.
+SYSTEM_PROMPT = """Eres un agente SRE/SecOps experto en Kubernetes.
+Tu trabajo es diagnosticar y remediar problemas del cluster usando las herramientas disponibles.
 
 PROCESO OBLIGATORIO:
-1. OBSERVAR (máximo 2-3 llamadas): Recolecta información con get_pod_logs, describe_pod, get_events.
-   - USA query_loki o search_errors_in_loki cuando necesites ver logs históricos (más de 1 hora) o buscar patrones de error.
-   - NO repitas herramientas de observación si ya tienes suficiente información.
-2. RAZONAR: Identifica la causa raíz con la información que ya tienes.
-3. ACTUAR: Aplica el fix más conservador (helm_upgrade, kubectl_apply, rollout_restart).
-4. VERIFICAR: Confirma que el fix funcionó (describe_pod o get_events).
+1. OBSERVAR: Primero SIEMPRE usa describe_pod para entender el tipo de recurso y el error.
+   - Revisa "Controlled By" en el output: si dice "ReplicaSet/X" es un Deployment, si no dice nada es un Pod bare.
+   - Usa get_pod_logs para ver el error específico.
+   - Opcionalmente usa query_loki o analyze_pod_health para más contexto.
+2. RAZONAR: Identifica la causa raíz.
+3. ACTUAR: Aplica el fix según el tipo de recurso (ver ESTRATEGIA DE FIX abajo).
+4. VERIFICAR: Confirma con describe_pod o get_events.
 5. FINALIZAR: Llama a finish() con el resultado.
 
+ESTRATEGIA DE FIX (MUY IMPORTANTE):
+Después de describe_pod, determina el tipo de recurso:
+
+A) Pod bare (sin "Controlled By" o sin ownerReferences):
+   - NO uses helm_upgrade (no es un Helm release).
+   - NO uses rollout_restart (no es un Deployment).
+   - USA kubectl_apply con el manifest YAML corregido para recrear el pod.
+   - Para OOMKilled: genera un manifest con el mismo image/command pero con resources.limits.memory más alto.
+
+B) Deployment/StatefulSet (tiene "Controlled By: ReplicaSet/X"):
+   - Usa patch_resource para modificar el Deployment (ej: aumentar memoria).
+   - O usa rollout_restart si solo necesitas reiniciar.
+   - Usa helm_upgrade SOLO si sabes que es un Helm release.
+
+C) Helm Release (pods en namespace 'monitoring' como prometheus, grafana, loki):
+   - Usa helm_upgrade con el chart correcto.
+
 REGLAS CRÍTICAS:
-- Máximo 2-3 pasos de observación. Después DEBES actuar o llamar finish().
-- NO repitas la misma herramienta con los mismos argumentos.
-- Si ya identificaste la causa raíz, actúa INMEDIATAMENTE. No sigas recolectando datos.
-- Prefiere fixes no destructivos (helm_upgrade > delete pod).
-- Si el fix requiere kubectl_apply con RBAC, genera el manifest correcto y completo.
+- SIEMPRE empieza con describe_pod para saber el tipo de recurso.
+- NO repitas la misma herramienta con los mismos argumentos. Si falla, intenta otro approach.
+- Si una acción falla (ej: helm_upgrade retorna error), NO la repitas. Usa una alternativa.
+- Máximo 2-3 pasos de observación, después DEBES actuar o llamar finish().
 - SIEMPRE termina llamando a finish() con resolved=true/false y un resumen técnico.
 
-CUÁNDO USAR LOKI (logs históricos):
-- Usa query_loki cuando: necesites ver logs de más de 1 hora atrás, buscar en múltiples pods, o filtrar por patrones específicos.
-- Usa search_errors_in_loki cuando: sospeches de errores recurrentes, necesites ver el historial de fallos, o get_pod_logs no muestre suficiente información.
+EJEMPLO: Pod bare con OOMKilled (memory-hog en namespace prd):
+1. describe_pod → ver que no tiene "Controlled By" (es bare pod), image=polinux/stress, limits.memory=50Mi
+2. get_pod_logs → ver "stress: dispatching hogs: 1 vm" (pide más memoria que el límite)
+3. delete_pod(namespace="prd", pod="memory-hog") → eliminar el pod viejo
+4. kubectl_apply con manifest YAML corregido (IMPORTANTE: limits.memory debe ser mayor que lo que usa la app):
+   apiVersion: v1
+   kind: Pod
+   metadata:
+     name: memory-hog
+     namespace: prd
+   spec:
+     containers:
+     - name: app
+       image: polinux/stress
+       resources:
+         limits:
+           memory: "256Mi"
+         requests:
+           memory: "256Mi"
+       command: ["stress"]
+       args: ["--vm", "1", "--vm-bytes", "100M", "--vm-hang", "1"]
+5. describe_pod → verificar que el pod está Running
+6. finish(resolved=true, summary="Pod bare con OOMKilled. Eliminé el pod y lo recreé con memory limit de 256Mi (antes 50Mi)")
 
-CUÁNDO USAR PROMETHEUS (métricas):
-- Usa analyze_pod_health cuando: un pod esté en CrashLoopBackOff o tenga problemas de rendimiento. Te dará un análisis completo de CPU, memoria, restarts y estado.
-- Usa get_pod_metrics cuando: necesites ver métricas específicas de un pod (CPU, memoria, restarts).
-- Usa get_high_resource_pods cuando: sospeches que hay problemas de recursos en el cluster y quieras encontrar los pods más pesados.
-- Usa query_prometheus cuando: necesites hacer una consulta PromQL específica que no cubran las otras herramientas.
-
-EJEMPLOS DE DIAGNÓSTICO CON MÉTRICAS:
-- Pod con muchos restarts → usar analyze_pod_health para ver si es por OOM (memoria) o CPU.
-- OOMKilled → verificar con get_pod_metrics si el uso de memoria está cerca del límite.
-- Pod lento → usar get_high_resource_pods para detectar si hay saturación de CPU.
-- CrashLoopBackOff → combinar analyze_pod_health + search_errors_in_loki para ver correlación entre métricas y errores.
-
-EJEMPLOS DE DIAGNÓSTICO RÁPIDO:
-- ImagePullBackOff → la imagen no existe o está mal tageada → helm_upgrade con la imagen correcta.
-- CrashLoopBackOff → revisar logs → corregir config/secreto/RBAC según el error.
-- OOMKilled → aumentar limits de memoria vía helm_upgrade.
+CUÁNDO USAR LOKI: logs de más de 1 hora, buscar patrones históricos, ver logs de múltiples pods.
+CUÁNDO USAR PROMETHEUS: verificar CPU/memoria/restarts, detectar pods con alta utilización.
 
 CONTEXTO DEL CLUSTER:
-- srv01: 192.168.1.100 (control plane)
-- srv02: 192.168.1.101 (worker)
-- Wazuh agents en ambos nodos
+- srv01: 192.168.1.100 (control plane), srv02: 192.168.1.101 (worker)
 - Stack: kube-prometheus-stack + loki-stack en namespace 'monitoring'
 - Chart de Grafana: prometheus-community/kube-prometheus-stack (release: prometheus)
 """
@@ -385,6 +462,8 @@ class ReActAgent:
         ]
 
         steps = []
+        previous_calls: set[str] = set()  # Tracking de calls anteriores para evitar loops
+
         for i in range(self.max_iterations):
             self.log(f"\n[ITERACIÓN {i+1}/{self.max_iterations}]")
 
@@ -402,10 +481,27 @@ class ReActAgent:
 
             # Fallback: si el modelo devolvió el tool call como texto plano
             if not tool_calls and msg.content:
-                parsed = _parse_tool_call_from_text(msg.content)
+                parsed = _parse_tool_call_from_text(msg.content, previous_calls)
                 if parsed:
                     self.log(f"🔄 Fallback: tool call detectado en texto, parseando...")
                     tool_calls = parsed
+
+            # Detectar repetición: si el tool call ya se hizo antes, inyectar corrección
+            if tool_calls:
+                tc0 = tool_calls[0]
+                call_key = f"{tc0.function.name}:{tc0.function.arguments}"
+                if call_key in previous_calls:
+                    self.log(f"🔁 Repetición detectada: {tc0.function.name}, forzando cambio de estrategia...")
+                    self.history.append({
+                        "role": "user",
+                        "content": (
+                            f"REPETICIÓN DETECTADA: Ya llamaste a {tc0.function.name} con los mismos argumentos. "
+                            "ESTÁ PROHIBIDO repetir la misma herramienta. "
+                            "Si kubectl_apply falló porque el pod ya existe, primero usa delete_pod y luego kubectl_apply. "
+                            "Si no puedes resolver el problema, llama a finish(resolved=false) con un resumen."
+                        )
+                    })
+                    continue
 
             # Si el modelo quiere pensar/hablar antes de actuar
             if msg.content:
@@ -441,6 +537,10 @@ class ReActAgent:
             for tc in tool_calls:
                 fn_name = tc.function.name
                 fn_args = json.loads(tc.function.arguments)
+
+                # Registrar call para detección de repetición
+                call_key = f"{fn_name}:{json.dumps(fn_args, sort_keys=True)}"
+                previous_calls.add(call_key)
 
                 self.log(f"🔧 ACCIÓN: {fn_name}({json.dumps(fn_args, ensure_ascii=False)})")
 
@@ -497,8 +597,12 @@ class ReActAgent:
                     )
                 case "kubectl_apply":
                     return k.kubectl_apply(args["manifest_yaml"], dry_run=dry)
+                case "delete_pod":
+                    return k.restart_pod(args["namespace"], args["pod"], dry_run=dry)
                 case "rollout_restart":
                     return k.rollout_restart(args["namespace"], args["resource"], dry_run=dry)
+                case "patch_resource":
+                    return k.patch_resource(args["namespace"], args["resource"], args["patch"], dry_run=dry)
                 case "query_loki":
                     return k.query_loki(
                         args["namespace"],

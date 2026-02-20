@@ -95,13 +95,16 @@ ollama run qwen2.5-coder:7b "Hola"
 
 Editá `config.yaml` con tu configuración:
 
-### 🔧 Opción A: Usar Ollama (local, gratis)
-
 ```yaml
-kimi:
-  api_key: "ollama"        # Cualquier string, ollama no valida
-  model: "qwen2.5-coder:7b"
-  base_url: "http://localhost:11434/v1"
+llm:
+  ollama:
+    api_key: "ollama"                    # Ollama no valida API key
+    model: "qwen2.5-coder:7b"
+    base_url: "http://localhost:11434/v1"
+  kimi:
+    api_key: "sk-TU-API-KEY"             # API key de Kimi (moonshot.cn)
+    model: "moonshot-v1-8k"
+    base_url: "https://api.moonshot.cn/v1"
 
 kubernetes:
   namespace: "monitoring,default,kube-system,prd"
@@ -122,20 +125,26 @@ prometheus:
   enabled: true            # true = usa métricas
 ```
 
-### ☁️ Opción B: Usar Kimi (API en la nube)
+Al iniciar, el agente muestra un menú para elegir el proveedor LLM:
 
-```yaml
-kimi:
-  api_key: "sk-..."        # Tu API key de Kimi
-  model: "moonshot-v1-8k"
-  base_url: "https://api.moonshot.cn/v1"
+```
+┌─────────────────────────────────┐
+│   Seleccionar proveedor LLM     │
+├─────────────────────────────────┤
+│  1) ollama     (qwen2.5-coder:7b)
+│  2) kimi       (moonshot-v1-8k)
+└─────────────────────────────────┘
 ```
 
 ## 🎮 Uso
 
 ```bash
-# 🔄 Monitor continuo (pregunta antes de remediar)
+# 🔄 Monitor continuo (selector interactivo de LLM)
 python main.py
+
+# 🎯 Elegir LLM directo por CLI
+python main.py --llm ollama
+python main.py --llm kimi
 
 # 🤖 Monitor continuo autónomo (sin confirmación)
 python main.py --auto
@@ -164,8 +173,10 @@ python main.py --once
 | 📊 `get_pod_metrics` | **Observe** | CPU, memoria, restarts de un pod |
 | 📊 `get_high_resource_pods` | **Observe** | Detecta pods con >80% CPU/memoria |
 | 📊 `analyze_pod_health` | **Observe** | Análisis completo de salud del pod |
+| 🔧 `delete_pod` | **Act** | Elimina un pod (necesario antes de recrear bare pods) |
+| 🔧 `patch_resource` | **Act** | Patch merge a Deployments/StatefulSets |
 | 🔧 `helm_upgrade` | **Act** | Modifica valores del chart |
-| 🔧 `kubectl_apply` | **Act** | Aplica manifest YAML |
+| 🔧 `kubectl_apply` | **Act** | Aplica manifest YAML (crear/recrear pods, RBAC, etc) |
 | 🔧 `rollout_restart` | **Act** | Reinicio graceful de deployment |
 | 🏁 `finish` | **Terminate** | Cierra el loop con resultado |
 
