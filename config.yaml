@@ -1,0 +1,29 @@
+kimi:
+  api_key: "ollama"        # puede ser cualquier string, ollama no valida
+  model: "qwen2.5-coder:7b"
+  base_url: "http://localhost:11434/v1"
+
+kubernetes:
+  namespace: "monitoring,default,kube-system"
+  kubeconfig: null  # null = usa el contexto actual (~/.kube/config)
+
+agent:
+  poll_interval: 30          # segundos entre ciclos de observación
+  auto_remediate: false      # true = actúa sin confirmación humana
+  max_iterations: 8          # máximo de pasos ReAct por incidente
+  dry_run: false             # true = muestra comandos pero no los ejecuta
+
+wazuh:
+  host: "192.168.1.100"
+  port: 55000
+  user: "wazuh-wui"
+  password: "YOUR_WAZUH_PASS"
+  enabled: false             # activar cuando esté listo
+
+loki:
+  url: "http://localhost:3100"
+  enabled: false             # activar después de instalar Loki
+
+prometheus:
+  url: "http://localhost:9090"
+  enabled: true
