@@ -401,6 +401,11 @@ class K8sCollector:
         
         return "\n".join(results)
 
+    def _is_prom_error(self, result: str) -> bool:
+        """Verifica si el resultado de Prometheus es un error o no tiene datos."""
+        error_prefixes = ("Error", "No hay datos")
+        return result.startswith(error_prefixes)
+
     def analyze_pod_health(self, namespace: str, pod: str) -> str:
         """
         Análisis completo de salud de un pod usando métricas de Prometheus.
@@ -412,67 +417,74 @@ class K8sCollector:
         """
         analysis = []
         analysis.append(f"=== Análisis de salud: {namespace}/{pod} ===\n")
-        
+
         # Verificar restarts
         restarts_query = f'kube_pod_container_status_restarts_total{{namespace="{namespace}", pod="{pod}"}}'
         restarts_result = self.query_prometheus(restarts_query, time_range=None)
-        if "N/A" not in restarts_result:
+        if self._is_prom_error(restarts_result):
+            analysis.append(f"⚠️ Restarts: {restarts_result}")
+        else:
             try:
                 restarts = float(restarts_result.split(":")[-1].strip())
                 if restarts > 5:
-                    analysis.append(f"⚠️ ALTO: El pod tiene {restarts} restarts. Posible CrashLoopBackOff.")
+                    analysis.append(f"⚠️ ALTO: El pod tiene {restarts:.0f} restarts. Posible CrashLoopBackOff.")
                 elif restarts > 0:
-                    analysis.append(f"ℹ️ INFO: El pod tiene {restarts} restarts.")
+                    analysis.append(f"ℹ️ INFO: El pod tiene {restarts:.0f} restarts.")
                 else:
                     analysis.append(f"✅ OK: El pod no tiene restarts.")
-            except:
+            except (ValueError, IndexError):
                 analysis.append(f"Restarts: {restarts_result}")
-        
+
         # Verificar uso de memoria vs límite
         memory_usage_query = f'container_memory_usage_bytes{{namespace="{namespace}", pod="{pod}"}}'
         memory_limit_query = f'container_spec_memory_limit_bytes{{namespace="{namespace}", pod="{pod}"}}'
-        
+
         usage_result = self.query_prometheus(memory_usage_query, time_range=None)
         limit_result = self.query_prometheus(memory_limit_query, time_range=None)
-        
-        try:
-            usage_str = usage_result.split(":")[-1].strip()
-            limit_str = limit_result.split(":")[-1].strip()
-            usage = float(usage_str)
-            limit = float(limit_str)
-            
-            if limit > 0:
-                percentage = (usage / limit) * 100
-                if percentage > 90:
-                    analysis.append(f"🚨 CRÍTICO: Uso de memoria al {percentage:.1f}%. Próximo a OOMKill!")
-                elif percentage > 80:
-                    analysis.append(f"⚠️ ALTO: Uso de memoria al {percentage:.1f}%. Considerar aumentar límite.")
+
+        if self._is_prom_error(usage_result) or self._is_prom_error(limit_result):
+            analysis.append(f"⚠️ Memoria: {usage_result}")
+        else:
+            try:
+                usage = float(usage_result.split(":")[-1].strip())
+                limit = float(limit_result.split(":")[-1].strip())
+
+                if limit > 0:
+                    percentage = (usage / limit) * 100
+                    if percentage > 90:
+                        analysis.append(f"🚨 CRÍTICO: Uso de memoria al {percentage:.1f}%. Próximo a OOMKill!")
+                    elif percentage > 80:
+                        analysis.append(f"⚠️ ALTO: Uso de memoria al {percentage:.1f}%. Considerar aumentar límite.")
+                    else:
+                        analysis.append(f"✅ OK: Uso de memoria al {percentage:.1f}%.")
                 else:
-                    analysis.append(f"✅ OK: Uso de memoria al {percentage:.1f}%.")
-            else:
-                analysis.append(f"ℹ️ INFO: No hay límite de memoria definido.")
-        except:
-            analysis.append(f"Memory: {usage_result} / {limit_result}")
-        
+                    analysis.append(f"ℹ️ INFO: No hay límite de memoria definido.")
+            except (ValueError, IndexError):
+                analysis.append(f"Memory: {usage_result} / {limit_result}")
+
         # Verificar uso de CPU
         cpu_query = f'rate(container_cpu_usage_seconds_total{{namespace="{namespace}", pod="{pod}"}}[5m])'
         cpu_result = self.query_prometheus(cpu_query, time_range=None)
-        if "N/A" not in cpu_result:
+        if self._is_prom_error(cpu_result):
+            analysis.append(f"⚠️ CPU: {cpu_result}")
+        else:
             try:
                 cpu_val = float(cpu_result.split(":")[-1].strip())
                 if cpu_val > 0.8:
                     analysis.append(f"⚠️ ALTO: Uso de CPU alto ({cpu_val:.2f} cores).")
                 else:
                     analysis.append(f"✅ OK: Uso de CPU normal ({cpu_val:.2f} cores).")
-            except:
+            except (ValueError, IndexError):
                 analysis.append(f"CPU: {cpu_result}")
-        
+
         # Verificar estado del contenedor
         ready_query = f'kube_pod_container_status_ready{{namespace="{namespace}", pod="{pod}"}}'
         ready_result = self.query_prometheus(ready_query, time_range=None)
-        if "0" in ready_result:
+        if self._is_prom_error(ready_result):
+            analysis.append(f"⚠️ Estado: {ready_result}")
+        elif ": 0" in ready_result:
             analysis.append(f"🚨 CRÍTICO: El contenedor NO está listo (ready=0).")
-        elif "1" in ready_result:
+        elif ": 1" in ready_result:
             analysis.append(f"✅ OK: El contenedor está listo.")
-        
+
         return "\n".join(analysis)
